@@ -66,7 +66,7 @@ UTM_CAMPAIGN=subscription_discount
 
 ## Запуск
 
-### Запуск бота
+### Локальный запуск (для разработки)
 
 ```bash
 python bot.py
@@ -81,6 +81,227 @@ python generate_qr.py
 ```
 
 QR-код будет сохранен в директории `qr_codes/bot_subscription_qr.png`
+
+## Деплой на сервер
+
+Проект поддерживает несколько способов деплоя на сервер.
+
+### Автоматический деплой (рекомендуется)
+
+Используйте скрипт автоматического деплоя:
+
+```bash
+# Деплой через Docker (рекомендуется)
+./deploy.sh docker
+
+# Деплой через systemd
+sudo ./deploy.sh systemd
+```
+
+### Вариант 1: Деплой через Docker (рекомендуется)
+
+**Преимущества:**
+- Изолированная среда
+- Простое обновление и откат
+- Не требует настройки Python на сервере
+- Автоматический перезапуск при падении
+
+**Требования:**
+- Установленный Docker
+- Установленный Docker Compose
+
+**Шаги:**
+
+1. Установите Docker и Docker Compose на сервере:
+```bash
+# Установка Docker (Ubuntu/Debian)
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Установка Docker Compose
+sudo apt install docker-compose-plugin
+```
+
+2. Склонируйте репозиторий на сервер:
+```bash
+git clone <repository-url>
+cd Bot
+```
+
+3. Настройте `.env` файл:
+```bash
+cp .env.example .env
+nano .env  # Заполните необходимые данные
+```
+
+4. Запустите бота:
+```bash
+docker-compose up -d
+```
+
+**Полезные команды:**
+
+```bash
+# Просмотр логов
+docker-compose logs -f
+
+# Остановка бота
+docker-compose down
+
+# Перезапуск бота
+docker-compose restart
+
+# Обновление бота
+git pull
+docker-compose down
+docker-compose build
+docker-compose up -d
+
+# Проверка статуса
+docker-compose ps
+```
+
+### Вариант 2: Деплой через systemd (Linux)
+
+**Преимущества:**
+- Нативная интеграция с системой
+- Автозапуск при перезагрузке сервера
+- Управление через systemctl
+
+**Требования:**
+- Linux сервер с systemd
+- Python 3.8+
+
+**Шаги:**
+
+1. Склонируйте репозиторий:
+```bash
+git clone <repository-url>
+cd Bot
+```
+
+2. Создайте виртуальное окружение и установите зависимости:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+3. Настройте `.env` файл:
+```bash
+cp .env.example .env
+nano .env  # Заполните необходимые данные
+```
+
+4. Установите systemd service:
+```bash
+# Отредактируйте telegram-bot.service, укажите правильные пути
+# Замените /home/ubuntu на путь к вашей директории
+# Замените User=ubuntu на вашего пользователя
+
+sudo cp telegram-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable telegram-bot.service
+sudo systemctl start telegram-bot.service
+```
+
+**Полезные команды:**
+
+```bash
+# Просмотр статуса
+sudo systemctl status telegram-bot.service
+
+# Просмотр логов
+sudo journalctl -u telegram-bot.service -f
+
+# Перезапуск бота
+sudo systemctl restart telegram-bot.service
+
+# Остановка бота
+sudo systemctl stop telegram-bot.service
+
+# Отключение автозапуска
+sudo systemctl disable telegram-bot.service
+```
+
+### Вариант 3: Деплой на VPS (ручной способ)
+
+1. Подключитесь к серверу:
+```bash
+ssh user@your-server-ip
+```
+
+2. Установите необходимые пакеты:
+```bash
+sudo apt update
+sudo apt install python3 python3-pip python3-venv git
+```
+
+3. Склонируйте репозиторий:
+```bash
+git clone <repository-url>
+cd Bot
+```
+
+4. Создайте виртуальное окружение:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+5. Настройте `.env`:
+```bash
+cp .env.example .env
+nano .env
+```
+
+6. Запустите бота в фоновом режиме:
+```bash
+nohup python bot.py > bot.log 2>&1 &
+```
+
+### Вариант 4: Деплой на облачные платформы
+
+#### Railway.app
+
+1. Создайте аккаунт на [Railway.app](https://railway.app/)
+2. Подключите GitHub репозиторий
+3. Добавьте переменные окружения из `.env`
+4. Railway автоматически обнаружит Dockerfile и задеплоит бота
+
+#### Heroku
+
+1. Создайте `Procfile`:
+```
+worker: python bot.py
+```
+
+2. Деплой:
+```bash
+heroku create your-bot-name
+heroku config:set BOT_TOKEN=your_token
+heroku config:set CHANNEL_ID=@your_channel
+heroku config:set CHANNEL_URL=https://t.me/your_channel
+heroku config:set BOT_USERNAME=your_bot_username
+git push heroku main
+```
+
+#### DigitalOcean App Platform
+
+1. Подключите GitHub репозиторий
+2. Выберите Docker как метод деплоя
+3. Добавьте переменные окружения
+4. Запустите деплой
+
+### Рекомендации по безопасности при деплое
+
+- ✅ Используйте `.env` файл для хранения секретов (никогда не коммитьте его)
+- ✅ Ограничьте доступ к серверу (firewall, SSH ключи)
+- ✅ Регулярно обновляйте зависимости
+- ✅ Мониторьте логи на наличие ошибок
+- ✅ Настройте автоматические бэкапы
+- ✅ Используйте HTTPS для всех внешних запросов
 
 ## Использование
 
@@ -101,15 +322,19 @@ QR-код будет сохранен в директории `qr_codes/bot_subs
 
 ```
 Bot/
-├── bot.py                  # Основной файл бота
-├── generate_qr.py          # Генератор QR-кодов
-├── requirements.txt        # Зависимости Python
-├── .env.example           # Пример конфигурации
-├── .env                   # Конфигурация (не в git)
-├── .gitignore            # Игнорируемые файлы
-├── qr_codes/             # Директория для QR-кодов
+├── bot.py                    # Основной файл бота
+├── generate_qr.py            # Генератор QR-кодов
+├── requirements.txt          # Зависимости Python
+├── .env.example             # Пример конфигурации
+├── .env                     # Конфигурация (не в git)
+├── .gitignore               # Игнорируемые файлы
+├── Dockerfile               # Docker образ для деплоя
+├── docker-compose.yml       # Docker Compose конфигурация
+├── telegram-bot.service     # systemd service файл
+├── deploy.sh                # Скрипт автоматического деплоя
+├── qr_codes/                # Директория для QR-кодов
 │   └── .gitkeep
-└── README.md             # Документация
+└── README.md                # Документация
 ```
 
 ## Технические детали

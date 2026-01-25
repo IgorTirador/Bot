@@ -1,0 +1,26 @@
+[Unit]
+Description=Telegram Subscription Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Bot
+Environment="PATH=/home/ubuntu/Bot/venv/bin"
+ExecStart=/home/ubuntu/Bot/venv/bin/python /home/ubuntu/Bot/bot.py
+Restart=always
+RestartSec=10
+
+# Логирование
+StandardOutput=append:/var/log/telegram-bot/bot.log
+StandardError=append:/var/log/telegram-bot/error.log
+
+# Безопасность
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/Bot/qr_codes
+
+[Install]
+WantedBy=multi-user.target
