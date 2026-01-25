@@ -3,9 +3,13 @@ import logging
 import os
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
+from database import Database
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -21,17 +25,55 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID')
 CHANNEL_URL = os.getenv('CHANNEL_URL')
+ADMIN_IDS = os.getenv('ADMIN_IDS', '').split(',')
+ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS if admin_id.strip().isdigit()]
 
 # Проверка наличия необходимых переменных
 if not BOT_TOKEN or not CHANNEL_ID or not CHANNEL_URL:
     raise ValueError("Не установлены необходимые переменные окружения. Проверьте файл .env")
 
-# Инициализация бота и диспетчера
+# Инициализация бота, диспетчера и базы данных
+storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=storage)
+db = Database()
 
 # Флаг для отслеживания проблем с конфигурацией канала
 bot_config_issue = False
+
+
+# States для FSM (рассылка)
+class BroadcastStates(StatesGroup):
+    waiting_for_message = State()
+
+
+def is_admin(user_id: int) -> bool:
+    """
+    Проверка, является ли пользователь администратором.
+
+    Args:
+        user_id: ID пользователя
+
+    Returns:
+        True если пользователь является администратором
+    """
+    return user_id in ADMIN_IDS
+
+
+async def save_user(message: types.Message):
+    """
+    Сохранение пользователя в базу данных.
+
+    Args:
+        message: Сообщение от пользователя
+    """
+    user = message.from_user
+    db.add_user(
+        user_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
 
 
 async def check_subscription(user_id: int) -> tuple[bool, str]:
@@ -112,8 +154,15 @@ async def cmd_start(message: types.Message):
 
     logger.info(f"Команда /start от пользователя {user_id} (@{username})")
 
+    # Сохраняем пользователя в БД
+    await save_user(message)
+
     # Проверяем, подписан ли уже пользователь
     is_subscribed, error = await check_subscription(user_id)
+
+    # Обновляем статус подписки в БД
+    if not error:
+        db.update_subscription_status(user_id, is_subscribed)
 
     # Если есть ошибка конфигурации
     if error in ["config_error", "permission_error"]:
@@ -160,6 +209,10 @@ async def callback_check_subscription(callback: types.CallbackQuery):
 
     # Проверяем подписку
     is_subscribed, error = await check_subscription(user_id)
+
+    # Обновляем статус подписки в БД
+    if not error:
+        db.update_subscription_status(user_id, is_subscribed)
 
     # Если есть ошибка конфигурации
     if error in ["config_error", "permission_error"]:
@@ -272,6 +325,237 @@ async def cmd_status(message: types.Message):
     status_text += "3. У бота должны быть права на просмотр участников\n"
 
     await message.answer(status_text, parse_mode="HTML")
+
+
+# ============== АДМИН-КОМАНДЫ ==============
+
+@dp.message(Command("admin"))
+async def cmd_admin(message: types.Message):
+    """
+    Обработчик команды /admin.
+    Админ-панель с командами управления.
+    """
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ У вас нет доступа к админ-панели.")
+        return
+
+    await save_user(message)
+
+    admin_text = (
+        "🔧 <b>Админ-панель</b>\n\n"
+        "<b>Доступные команды:</b>\n"
+        "/stats - Статистика пользователей\n"
+        "/broadcast - Запустить рассылку\n"
+        "/history - История рассылок\n"
+        "/status - Проверка конфигурации бота\n\n"
+        f"<b>Ваш ID:</b> <code>{message.from_user.id}</code>\n"
+        f"<b>Администраторов:</b> {len(ADMIN_IDS)}"
+    )
+
+    await message.answer(admin_text, parse_mode="HTML")
+
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    """
+    Обработчик команды /stats.
+    Показывает статистику пользователей.
+    """
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ У вас нет доступа к статистике.")
+        return
+
+    total, subscribed, blocked = db.get_stats()
+
+    stats_text = (
+        "📊 <b>Статистика пользователей</b>\n\n"
+        f"👥 Всего пользователей: <b>{total}</b>\n"
+        f"✅ Подписанных: <b>{subscribed}</b>\n"
+        f"❌ Заблокировали бота: <b>{blocked}</b>\n"
+        f"🎯 Активных: <b>{total - blocked}</b>\n\n"
+        f"📈 Конверсия: <b>{(subscribed / total * 100):.1f}%</b> (из всех пользователей)"
+        if total > 0 else "Пользователей пока нет"
+    )
+
+    await message.answer(stats_text, parse_mode="HTML")
+
+
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды /broadcast.
+    Запуск рассылки сообщений всем пользователям.
+    """
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ У вас нет доступа к рассылке.")
+        return
+
+    total_users = len(db.get_all_users(only_active=True))
+
+    if total_users == 0:
+        await message.answer("❌ Нет пользователей для рассылки.")
+        return
+
+    await state.set_state(BroadcastStates.waiting_for_message)
+
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ Отменить рассылку")]],
+        resize_keyboard=True
+    )
+
+    await message.answer(
+        f"📢 <b>Запуск рассылки</b>\n\n"
+        f"Активных пользователей: <b>{total_users}</b>\n\n"
+        f"Отправьте сообщение, которое нужно разослать всем пользователям.\n"
+        f"Поддерживаются: текст, фото, видео, документы.\n\n"
+        f"Для отмены нажмите кнопку ниже.",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+@dp.message(BroadcastStates.waiting_for_message)
+async def process_broadcast_message(message: types.Message, state: FSMContext):
+    """
+    Обработчик сообщения для рассылки.
+    Выполняет рассылку всем пользователям.
+    """
+    # Проверка на отмену
+    if message.text == "❌ Отменить рассылку":
+        await state.clear()
+        await message.answer(
+            "❌ Рассылка отменена.",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        return
+
+    # Получаем список пользователей
+    users = db.get_all_users(only_active=True)
+
+    if not users:
+        await state.clear()
+        await message.answer(
+            "❌ Нет пользователей для рассылки.",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        return
+
+    # Создаем запись о рассылке в БД
+    broadcast_id = db.create_broadcast(
+        admin_id=message.from_user.id,
+        message_text=message.text or message.caption or "[медиа]",
+        total_users=len(users)
+    )
+
+    await state.clear()
+
+    # Отправляем подтверждение
+    status_msg = await message.answer(
+        f"⏳ <b>Рассылка запущена...</b>\n\n"
+        f"Всего пользователей: {len(users)}\n"
+        f"Отправлено: 0\n"
+        f"Ошибок: 0",
+        reply_markup=types.ReplyKeyboardRemove(),
+        parse_mode="HTML"
+    )
+
+    # Выполняем рассылку
+    sent_count = 0
+    failed_count = 0
+
+    logger.info(f"Начало рассылки #{broadcast_id} для {len(users)} пользователей")
+
+    for i, user_id in enumerate(users, 1):
+        try:
+            # Копируем сообщение пользователю
+            await message.copy_to(user_id)
+            sent_count += 1
+
+            # Задержка для защиты от rate limits (30 сообщений в секунду)
+            await asyncio.sleep(0.05)
+
+        except TelegramForbiddenError:
+            # Пользователь заблокировал бота
+            db.mark_user_blocked(user_id)
+            failed_count += 1
+            logger.info(f"Пользователь {user_id} заблокировал бота")
+
+        except Exception as e:
+            failed_count += 1
+            logger.error(f"Ошибка при отправке пользователю {user_id}: {e}")
+
+        # Обновляем статус каждые 10 пользователей
+        if i % 10 == 0:
+            try:
+                await status_msg.edit_text(
+                    f"⏳ <b>Рассылка в процессе...</b>\n\n"
+                    f"Всего пользователей: {len(users)}\n"
+                    f"Отправлено: {sent_count}\n"
+                    f"Ошибок: {failed_count}\n"
+                    f"Прогресс: {i}/{len(users)} ({i/len(users)*100:.1f}%)",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
+
+    # Обновляем статистику в БД
+    if broadcast_id:
+        db.update_broadcast_stats(
+            broadcast_id=broadcast_id,
+            sent_count=sent_count,
+            failed_count=failed_count,
+            completed=True
+        )
+
+    # Финальное сообщение
+    await status_msg.edit_text(
+        f"✅ <b>Рассылка завершена!</b>\n\n"
+        f"Всего пользователей: {len(users)}\n"
+        f"✅ Успешно отправлено: {sent_count}\n"
+        f"❌ Ошибок: {failed_count}\n"
+        f"📊 Успешность: {sent_count/len(users)*100:.1f}%",
+        parse_mode="HTML"
+    )
+
+    logger.info(f"Рассылка #{broadcast_id} завершена: отправлено={sent_count}, ошибок={failed_count}")
+
+
+@dp.message(Command("history"))
+async def cmd_history(message: types.Message):
+    """
+    Обработчик команды /history.
+    Показывает историю рассылок.
+    """
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ У вас нет доступа к истории рассылок.")
+        return
+
+    broadcasts = db.get_broadcast_history(limit=10)
+
+    if not broadcasts:
+        await message.answer("📭 История рассылок пуста.")
+        return
+
+    history_text = "📜 <b>История рассылок</b>\n\n"
+
+    for broadcast in broadcasts:
+        status = "✅" if broadcast['completed_at'] else "⏳"
+        success_rate = (
+            f"{broadcast['sent_count']/broadcast['total_users']*100:.1f}%"
+            if broadcast['total_users'] > 0 else "0%"
+        )
+
+        history_text += (
+            f"{status} <b>Рассылка #{broadcast['id']}</b>\n"
+            f"   Текст: <i>{broadcast['message_text']}</i>\n"
+            f"   Отправлено: {broadcast['sent_count']}/{broadcast['total_users']} ({success_rate})\n"
+            f"   Дата: {broadcast['created_at'][:19]}\n\n"
+        )
+
+    await message.answer(history_text, parse_mode="HTML")
+
+
+# ============== КОНЕЦ АДМИН-КОМАНД ==============
 
 
 async def check_bot_config():

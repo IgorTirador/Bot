@@ -30,6 +30,11 @@ wheels/
 qr_codes/*.png
 !qr_codes/.gitkeep
 
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
 # IDE
 .vscode/
 .idea/
