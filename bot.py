@@ -176,7 +176,13 @@ async def cmd_start(message: types.Message):
         return
 
     if is_subscribed:
-        # Пользователь уже подписан - отправляем сообщение со скидкой
+        # Пользователь уже подписан - отправляем сообщение со скидкой и кнопками
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Получить скидку 20%", callback_data="get_discount")],
+            [InlineKeyboardButton(text="🎭 Получить свой Тест-драйв", url="https://forms.yandex.ru/u/697eaf7e90fa7b4317fd26bd")],
+            [InlineKeyboardButton(text="💬 Обратиться к менеджеру", url="https://t.me/xscosmo")]
+        ])
+
         await message.answer(
             "Приветствую в Xenia Cosmo🥂  Вам доступна скидка 20% на парфюм объемом от 50 мл🥳\n\n"
             "Если вы впервые, воспользуйтесь предложением \"Тест-Драйв\" - три или пять миниатюр "
@@ -184,6 +190,7 @@ async def cmd_start(message: types.Message):
             "А если теряетесь в выборе и хотите поэкспериментировать, обратитесь к нам - "
             "мы сделаем персональную подборку.\n\n"
             "Возникли вопросы - обратитесь к менеджеру.",
+            reply_markup=keyboard,
             parse_mode="HTML"
         )
     else:
@@ -234,9 +241,16 @@ async def callback_check_subscription(callback: types.CallbackQuery):
             "Возникли вопросы - обратитесь к менеджеру."
         )
 
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Получить скидку 20%", callback_data="get_discount")],
+            [InlineKeyboardButton(text="🎭 Получить свой Тест-драйв", url="https://forms.yandex.ru/u/697eaf7e90fa7b4317fd26bd")],
+            [InlineKeyboardButton(text="💬 Обратиться к менеджеру", url="https://t.me/xscosmo")]
+        ])
+
         try:
             await callback.message.edit_text(
                 welcome_text,
+                reply_markup=keyboard,
                 parse_mode="HTML"
             )
         except Exception as e:
@@ -244,6 +258,7 @@ async def callback_check_subscription(callback: types.CallbackQuery):
             # Отправляем новое сообщение
             await callback.message.answer(
                 welcome_text,
+                reply_markup=keyboard,
                 parse_mode="HTML"
             )
 
@@ -254,6 +269,24 @@ async def callback_check_subscription(callback: types.CallbackQuery):
             "❌ Вы еще не подписались на канал. Пожалуйста, подпишитесь и попробуйте снова.",
             show_alert=True
         )
+
+
+@dp.callback_query(F.data == "get_discount")
+async def callback_get_discount(callback: types.CallbackQuery):
+    """
+    Обработчик нажатия кнопки "Получить скидку 20%".
+    Показывает инструкции по получению скидки.
+    """
+    discount_text = (
+        "🎁 <b>Как получить скидку 20%</b>\n\n"
+        "Для получения скидки обратитесь к менеджеру @xscosmo и сообщите, "
+        "что вы подписались на канал через бота.\n\n"
+        "Скидка действует на парфюм объемом от 50 мл.\n\n"
+        "Ждем вас! 🥂"
+    )
+
+    await callback.answer()
+    await callback.message.answer(discount_text, parse_mode="HTML")
 
 
 @dp.message(Command("help"))
